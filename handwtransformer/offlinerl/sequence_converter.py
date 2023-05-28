@@ -1,19 +1,24 @@
+import os
 from typing import Tuple
 import torch
 from handwtransformer.dataset.Dataset import Dataset
 from handwtransformer.dataset.HandwritingSample import HandwritingSample
 
 
-def generate_sequence_tensor(dataset: Dataset) -> Tuple[torch.Tensor, torch.Tensor]:
+def generate_sequence_tensor(dataset: Dataset, sequence_cache_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
     """Generates a sequence tensor from a dataset.
 
     Args:
         dataset (Dataset): The dataset to generate the sequence tensor from.
+        sequence_cache_path (str): The path to the cache file for the sequence tensor.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: The sequence tensor(num_samples, max_seq_len, 4) and a mask(num_samples, max_seq_len).
     """
     
+    if os.path.exists(sequence_cache_path):
+        return torch.load(sequence_cache_path)
+        
     max_seq_len = max([sum([stroke.shape[0] for stroke in sample.strokes]) for sample in dataset.samples])
     sequence_tensor = torch.zeros((len(dataset.samples), max_seq_len, 4))
     mask = torch.zeros((len(dataset.samples), max_seq_len))
@@ -33,18 +38,22 @@ def generate_sequence_tensor(dataset: Dataset) -> Tuple[torch.Tensor, torch.Tens
     sequence_tensor[:, :-1, :2] = sequence_tensor[:, 1:, :2] - sequence_tensor[:, :-1, :2]
     sequence_tensor[:, :, :2] = sequence_tensor[:, :, :2] / torch.std(sequence_tensor[:, :, :2], dim=(0, 1), keepdim=True)
     sequence_tensor[:, -1, :2] = 0
-
-    return sequence_tensor, mask
+    
+    result = (sequence_tensor, mask)
+    torch.save(result, sequence_cache_path)
+    return result
 
 def sequence_tensor_to_handwriting_sample(text: str, sequence_tensor: torch.Tensor) -> HandwritingSample:
     """Converts a sequence tensor to a handwriting sample.
 
     Args:
+        text (str): The text of the handwriting sample.
         sequence_tensor (torch.Tensor): The sequence tensor to convert. Shape == (max_seq_len, 4)
 
     Returns:
         HandwritingSample: The converted handwriting sample.
     """
+        
     assert sequence_tensor.shape[1] == 4
     assert len(sequence_tensor.shape) == 2
     abs_poses = sequence_tensor[:, :2].cumsum(dim=0)
