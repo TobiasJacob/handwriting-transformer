@@ -1,10 +1,10 @@
-import logging
 import os
 from typing import List
 import numpy as np
 from tqdm import tqdm
 from handwtransformer.dataset.Dataset import Dataset
 from handwtransformer.dataset.HandwritingSample import HandwritingSample
+from handwtransformer.dataset.loaders.Cacher import cache_dataset, load_dataset
 
 def parse_csr_file(path: str) -> List[str]:
     """Parses a csr file and returns the text.
@@ -64,7 +64,8 @@ def load_iam_from_path(path: str, cache_path: str) -> Dataset:
     Returns:
         Dataset: The loaded dataset.
     """
-    import xml.etree.ElementTree as ET
+    if os.path.exists(cache_path):
+        return load_dataset(cache_path)
     
     dataset = Dataset(path)
     
@@ -108,6 +109,8 @@ def load_iam_from_path(path: str, cache_path: str) -> Dataset:
     total_samples = len(dataset.samples)
     total_strokes = sum([len(sample.strokes) for sample in dataset.samples])
     total_data_points = sum([len(stroke) for sample in dataset.samples for stroke in sample.strokes])
-    logging.info(f'Loaded {total_samples} samples with {total_strokes} strokes and {total_data_points} data points.')
+    print(f'Loaded {total_samples} samples with {total_strokes} strokes and {total_data_points} data points.')
+    
+    cache_dataset(dataset, cache_path)
     
     return dataset
