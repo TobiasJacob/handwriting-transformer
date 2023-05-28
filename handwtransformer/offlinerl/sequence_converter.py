@@ -3,22 +3,26 @@ from typing import Tuple
 import torch
 from handwtransformer.dataset.Dataset import Dataset
 from handwtransformer.dataset.HandwritingSample import HandwritingSample
+from handwtransformer.config.Config import Config
+from handwtransformer.dataset.loaders.IamLoader import load_iam_from_path
 
 
-def generate_sequence_tensor(dataset: Dataset, sequence_cache_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
+def generate_sequence_tensor(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
     """Generates a sequence tensor from a dataset.
 
     Args:
         dataset (Dataset): The dataset to generate the sequence tensor from.
-        sequence_cache_path (str): The path to the cache file for the sequence tensor.
+        config (Config): The config.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: The sequence tensor(num_samples, max_seq_len, 4) and a mask(num_samples, max_seq_len).
     """
     
-    if os.path.exists(sequence_cache_path):
-        return torch.load(sequence_cache_path)
-        
+    if os.path.exists(config.sequence_cache_path):
+        return torch.load(config.sequence_cache_path)
+    
+    dataset = load_iam_from_path(config.dataset_path, config.cache_path)
+
     max_seq_len = max([sum([stroke.shape[0] for stroke in sample.strokes]) for sample in dataset.samples])
     sequence_tensor = torch.zeros((len(dataset.samples), max_seq_len, 4))
     mask = torch.zeros((len(dataset.samples), max_seq_len))
@@ -40,7 +44,7 @@ def generate_sequence_tensor(dataset: Dataset, sequence_cache_path: str) -> Tupl
     sequence_tensor[:, -1, :2] = 0
     
     result = (sequence_tensor, mask)
-    torch.save(result, sequence_cache_path)
+    torch.save(result, config.sequence_cache_path)
     return result
 
 def sequence_tensor_to_handwriting_sample(text: str, sequence_tensor: torch.Tensor) -> HandwritingSample:
