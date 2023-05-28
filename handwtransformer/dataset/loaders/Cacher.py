@@ -3,8 +3,10 @@
 import os
 import pickle
 
+from handwtransformer.dataset.Dataset import Dataset
 
-def cache_dataset(dataset, cache_path: str) -> None:
+
+def cache_dataset(dataset: Dataset, cache_path: str) -> None:
     """Caches a dataset to a specified path.
 
     Args:
@@ -14,7 +16,7 @@ def cache_dataset(dataset, cache_path: str) -> None:
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     pickle.dump(dataset, open(cache_path, "wb"))
     
-def load_dataset(cache_path: str):
+def load_dataset(cache_path: str) -> Dataset:
     """Loads a dataset from a specified path.
 
     Args:
