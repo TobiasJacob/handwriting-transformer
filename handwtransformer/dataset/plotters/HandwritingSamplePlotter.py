@@ -11,13 +11,14 @@ def plot_handwriting_sample(handwriting_sample: HandwritingSample) -> None:
     Args:
         handwriting_sample (HandwritingSample): The handwriting sample to plot.
     """
-    plt.figure(figsize=(20, 5))
+    fig = plt.figure(figsize=(20, 5))
     plt.title(handwriting_sample.text)
     plt.gca().set_aspect('equal', adjustable='box')
     plt.gca().invert_yaxis()
     for stroke in handwriting_sample.strokes:
         plt.plot(stroke[:, 0], stroke[:, 1], color='black')
-    plt.show()
+        
+    return fig
     
 def plot_handwriting_samples(handwriting_samples: List[HandwritingSample]) -> None:
     """Plots a list of handwriting samples as subfigures.
@@ -25,7 +26,7 @@ def plot_handwriting_samples(handwriting_samples: List[HandwritingSample]) -> No
     Args:
         handwriting_samples (List[HandwritingSample]): The handwriting samples to plot.
     """
-    plt.figure(figsize=(20, 5))
+    fig = plt.figure(figsize=(20, 5))
     for i, handwriting_sample in enumerate(handwriting_samples):
         plt.subplot(1, len(handwriting_samples), i + 1)
         plt.title(handwriting_sample.text)
@@ -33,7 +34,7 @@ def plot_handwriting_samples(handwriting_samples: List[HandwritingSample]) -> No
         plt.gca().invert_yaxis()
         for stroke in handwriting_sample.strokes:
             plt.plot(stroke[:, 0], stroke[:, 1], color='black')
-    plt.show()
+    return fig
 
 def animate_handwriting_sample(handwriting_sample: HandwritingSample) -> None:
     """Animates a handwriting sample.
@@ -65,4 +66,4 @@ def animate_handwriting_sample(handwriting_sample: HandwritingSample) -> None:
                 break
             ticks_so_far += stroke.shape[0]
     ani = animation.FuncAnimation(fig, animate, frames=range(sum([stroke.shape[0] for stroke in handwriting_sample.strokes])), interval=20)
-    plt.show()
+    return ani
