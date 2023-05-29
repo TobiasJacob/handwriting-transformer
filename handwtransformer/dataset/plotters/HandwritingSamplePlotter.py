@@ -5,7 +5,7 @@ import numpy as np
 from handwtransformer.dataset.HandwritingSample import HandwritingSample
 from matplotlib import pyplot as plt
 
-def plot_handwriting_sample(handwriting_sample: HandwritingSample) -> None:
+def plot_handwriting_sample(handwriting_sample: HandwritingSample) -> plt.Figure:
     """Plots a handwriting sample.
 
     Args:
@@ -20,7 +20,7 @@ def plot_handwriting_sample(handwriting_sample: HandwritingSample) -> None:
         
     return fig
     
-def plot_handwriting_samples(handwriting_samples: List[HandwritingSample]) -> None:
+def plot_handwriting_samples(handwriting_samples: List[HandwritingSample]) -> plt.Figure:
     """Plots a list of handwriting samples as subfigures.
 
     Args:
@@ -36,7 +36,7 @@ def plot_handwriting_samples(handwriting_samples: List[HandwritingSample]) -> No
             plt.plot(stroke[:, 0], stroke[:, 1], color='black')
     return fig
 
-def animate_handwriting_sample(handwriting_sample: HandwritingSample) -> None:
+def animate_handwriting_sample(handwriting_sample: HandwritingSample) -> plt.Figure:
     """Animates a handwriting sample.
 
     Args:

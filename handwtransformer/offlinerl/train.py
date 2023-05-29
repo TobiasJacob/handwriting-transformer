@@ -12,19 +12,26 @@ def train(config: Config):
     
     model = HandwritingTransformer(max_seq_len=sequences.shape[1])
     batch_size = 32
+    pred_window = 32
     
     # summary_writer = SummaryWriter()
     
     for step in range(1000):
         batch_indices = torch.randint(0, len(sequences), (batch_size,))
+        predict_cutoff = torch.randint(0, sequences.shape[1] - pred_window, (1,))
         
-        batch_sequences = sequences[batch_indices]
-        batch_sequences_mask = sequences_mask[batch_indices]
         batch_tokens = tokens[batch_indices]
         batch_tokens_mask = tokens_mask[batch_indices]
+        batch_sequences_so_far = sequences[batch_indices, :predict_cutoff]
+        batch_sequences_so_far_mask = sequences_mask[batch_indices, :predict_cutoff]
+        train_sequences = sequences[batch_indices, predict_cutoff:predict_cutoff + pred_window]
+        train_sequences_mask = sequences_mask[batch_indices, predict_cutoff:predict_cutoff + pred_window]
         
-        loss = model(batch_tokens, batch_tokens_mask, batch_sequences, batch_sequences_mask)
+        if train_sequences_mask.sum() == 0:
+            continue
+                
+        loss = model(batch_tokens, batch_tokens_mask, batch_sequences_so_far, batch_sequences_so_far_mask, train_sequences, train_sequences_mask)
         
-        print(loss)
+        print(step, loss.item())
         # summary_writer.add_scalar("loss", loss, step)
     
