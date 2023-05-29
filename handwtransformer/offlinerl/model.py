@@ -57,7 +57,7 @@ class HandwritingTransformer(torch.nn.Module):
         self.block1 = EncoderBlock(encoding_size, 8, 128)
         self.block2 = EncoderBlock(encoding_size, 8, 128)
         self.block3 = EncoderBlock(encoding_size, 8, 128)
-        self.final_attention = torch.nn.MultiheadAttention(encoding_size, 8, batch_first=True)
+        # self.final_attention = torch.nn.MultiheadAttention(encoding_size, 8, batch_first=True)
         self.output = torch.nn.Linear(encoding_size, 6)
         
     def forward(self, text: torch.Tensor, text_mask: torch.Tensor, sequences_so_far: torch.Tensor, sequences_so_far_mask: torch.Tensor, train_sequences: Optional[torch.Tensor], train_sequences_mask: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -90,7 +90,8 @@ class HandwritingTransformer(torch.nn.Module):
         # Command encodings
         z = self.block2(input, input_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
         z = self.block3(z, input_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        z, _ = self.final_attention(torch.zeros_like(z[:, 0:1]), z, z) # Shape == (batch_size, 1, encoding_size)
+        # z, _ = self.final_attention(torch.ones_like(z[:, 0:1]), z, z) # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
+        z = z[:, -1:] # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
         prob_params = self.output(z) # Shape == (batch_size, 6)
         
         pen_delta = torch.distributions.MultivariateNormal(prob_params[:, 0, :2], torch.diag_embed(torch.exp(prob_params[:, 0, 2:4]))) # Event_Shape == (batch_size, 2)
