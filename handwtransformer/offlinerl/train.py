@@ -29,7 +29,7 @@ def train(config: Config):
     
     summary_writer = SummaryWriter()
     
-    for step in range(1000):
+    for step in range(100000):
         for mode in ["train", "train", "train", "train", "eval"]:
             train_sequences_mask = None
             split_i = len(sequences) // 10 * 8
@@ -100,3 +100,7 @@ def train(config: Config):
                 # log an example tensor of what the model should predict as text
                 summary_writer.add_text(f"{mode}/tensor_groundtruth", str(sequences[eval_indices][0, 0:200]), step)
         
+        if step % 100 == 99:
+            # save the model in summary writer path
+            path = summary_writer.log_dir + f"/model_{step}.pth"
+            torch.save(model.state_dict(), path)
