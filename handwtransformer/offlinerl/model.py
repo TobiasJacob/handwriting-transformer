@@ -45,9 +45,10 @@ class EncoderBlock(torch.nn.Module):
 class HandwritingTransformer(torch.nn.Module):
     def __init__(self, max_seq_len: int, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        encoding_size = 64
+        encoding_size = 256
         self.max_seq_len = max_seq_len
         self.encoding_size = encoding_size
+        self.n_mixtures = 20
         
         self.letter_embedding = torch.nn.Embedding(256, encoding_size)
         self.letter_positional_embedding = torch.nn.Embedding(self.max_seq_len, encoding_size)
@@ -55,11 +56,14 @@ class HandwritingTransformer(torch.nn.Module):
         self.command_embedding = torch.nn.Linear(4, encoding_size)
         self.command_positional_embedding = torch.nn.Embedding(self.max_seq_len, encoding_size)
         
-        self.block1 = EncoderBlock(encoding_size, 8, 128)
-        self.block2 = EncoderBlock(encoding_size, 8, 128)
-        self.block3 = EncoderBlock(encoding_size, 8, 128)
+        self.block1 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
+        self.block2 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
+        self.block3 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
+        self.block4 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
+        self.block5 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
+        self.block6 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
         # self.final_attention = torch.nn.MultiheadAttention(encoding_size, 8, batch_first=True)
-        self.output = torch.nn.Linear(encoding_size, 6)
+        self.output = torch.nn.Linear(encoding_size, 2+5*self.n_mixtures)
         
     def forward(self, text: torch.Tensor, text_mask: torch.Tensor, sequences_so_far: torch.Tensor, sequences_so_far_mask: torch.Tensor, train_sequences: Optional[torch.Tensor], train_sequences_mask: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass of the model.
@@ -85,19 +89,35 @@ class HandwritingTransformer(torch.nn.Module):
         sequences_so_far = self.command_embedding(sequences_so_far) # Shape == (batch_size, max_seq_len, encoding_size)
         sequences_so_far = sequences_so_far + command_encodings # Shape == (batch_size, max_seq_len, encoding_size)
         
-        input = torch.concat((x, sequences_so_far), dim=1) # Shape == (batch_size, max_text_len + max_seq_len, encoding_size)
-        input_mask = torch.concat((text_mask, sequences_so_far_mask), dim=1) # Shape == (batch_size, max_text_len + max_seq_len)
+        z = torch.concat((x, sequences_so_far), dim=1) # Shape == (batch_size, max_text_len + max_seq_len, encoding_size)
+        z_mask = torch.concat((text_mask, sequences_so_far_mask), dim=1) # Shape == (batch_size, max_text_len + max_seq_len)
 
         # Command encodings
-        z = self.block2(input, input_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        z = self.block3(z, input_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
+        z = self.block2(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
+        z = self.block3(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
+        z = self.block4(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
+        z = self.block5(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
+        z = self.block6(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
         # z, _ = self.final_attention(torch.ones_like(z[:, 0:1]), z, z) # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
         z = z[:, -1:] # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
-        prob_params = self.output(z) # Shape == (batch_size, 6)
+        prob_params = self.output(z) # Shape == (batch_size, 1, 6)
         
-        pen_delta = torch.distributions.MultivariateNormal(prob_params[:, 0, :2], torch.diag_embed(torch.exp(torch.maximum(prob_params[:, 0, 2:4], torch.tensor(0.01))))) # Event_Shape == (batch_size, 2)
-        stroke_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 4])) # Event_Shape == (batch_size,)
-        episode_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 5])) # Event_Shape == (batch_size,)
+        # pen_delta is going to be a mixture model of 20 bivariate gaussians
+        stroke_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 0])) # Event_Shape == (batch_size,)
+        episode_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 1])) # Event_Shape == (batch_size,)
+        
+        n_mixtures = self.n_mixtures
+        mixture_weights = torch.softmax(prob_params[:, 0, 2:2+n_mixtures], dim=-1) # Shape == (batch_size, 20)
+        gaussian_mus = prob_params[:, 0, 2+n_mixtures:2+3*n_mixtures].reshape(-1, n_mixtures, 2) # Shape == (batch_size, 20, 2)
+        gaussian_sigma = torch.exp(prob_params[:, 0, 2+3*n_mixtures:2+5*n_mixtures].reshape(-1, n_mixtures, 2)) # Shape == (batch_size, 20, 2)
+        
+        mixture_distribution = torch.distributions.Categorical(mixture_weights) # Event_Shape == (batch_size,)
+        component_distribution = torch.distributions.MultivariateNormal(gaussian_mus, torch.diag_embed(gaussian_sigma)) # Event_Shape == (batch_size, 20)
+        
+        pen_delta = torch.distributions.MixtureSameFamily(
+            mixture_distribution,
+            component_distribution
+        ) # Event_Shape == (batch_size, 2)
         
         # Compute predictions or loss
         if train_sequences is None:
@@ -113,4 +133,17 @@ class HandwritingTransformer(torch.nn.Module):
             loss += -episode_end.log_prob(train_sequences[:, 0, 3])
             loss = (loss * train_sequences_mask).sum() / train_sequences_mask.sum()
             # loss = loss.sum()
-            return loss
+            debug_stats = {
+                "mixture_distribution_entropy": mixture_distribution.entropy().mean(),
+                "component_distribution_entropy": component_distribution.entropy().mean(),
+                "stroke_end_entropy": stroke_end.entropy().mean(),
+                "episode_end_entropy": episode_end.entropy().mean(),
+                "mse": ((pen_delta.mean - train_sequences[:, 0, :2])**2).mean(),
+                "stroke_end_prob": stroke_end.probs.mean(),
+                "episode_end_prob": episode_end.probs.mean(),
+                "gaussian_sigma": gaussian_sigma.mean(),
+                "gaussian_std": gaussian_sigma.mean().sqrt(),
+                "gaussian_mus": gaussian_mus.mean(),
+            }
+                
+            return loss, debug_stats

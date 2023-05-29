@@ -40,10 +40,10 @@ def generate_sequence_tensor(config: Config) -> Tuple[torch.Tensor, torch.Tensor
 
     # Calcualte deltas and normalize
     sequence_tensor[:, :-1, :2] = sequence_tensor[:, 1:, :2] - sequence_tensor[:, :-1, :2]
-    sequence_tensor[:, :, :2] = sequence_tensor[:, :, :2] / torch.std(sequence_tensor[:, :, :2], dim=(0, 1), keepdim=True)
     # Set the pose delta at end of sequence to 0
     for i in range(sequence_tensor.shape[0]):
         sequence_tensor[i, sequence_tensor[i, :, 3] > 0.5, :2] = 0
+    sequence_tensor[:, :, :2] = sequence_tensor[:, :, :2] / torch.std(sequence_tensor[mask][:2])
     
     result = (sequence_tensor, mask)
     torch.save(result, config.sequence_cache_path)

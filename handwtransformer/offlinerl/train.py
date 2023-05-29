@@ -14,14 +14,17 @@ def train(config: Config):
     tokens, tokens_mask = tokenize_dataset(config)
     sequences = sequences.to(config.device)
     sequences_mask = sequences_mask.to(config.device)
+    print("Std:", torch.std(sequences[sequences_mask][:2]))
     tokens = tokens.to(config.device)
     tokens_mask = tokens_mask.to(config.device)
     
     model = HandwritingTransformer(max_seq_len=sequences.shape[1])
     model.to(config.device)
-    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
+    print(model)
+    print("Num parameters:", sum([p.numel() for p in model.parameters()]))
+    optim = torch.optim.Adam(model.parameters(), lr=1e-4)
     
-    batch_size = 32
+    batch_size = 16
     preview_batch_size = 8
     
     summary_writer = SummaryWriter()
@@ -48,27 +51,31 @@ def train(config: Config):
             if mode == "eval":
                 with torch.no_grad():
                     model.eval()
-                    loss = model(batch_tokens, batch_tokens_mask, batch_sequences_so_far, batch_sequences_so_far_mask, train_sequences, train_sequences_mask)
+                    loss, debug_stats = model(batch_tokens, batch_tokens_mask, batch_sequences_so_far, batch_sequences_so_far_mask, train_sequences, train_sequences_mask)
             else:
                 model.train()
-                loss = model(batch_tokens, batch_tokens_mask, batch_sequences_so_far, batch_sequences_so_far_mask, train_sequences, train_sequences_mask)
+                loss, debug_stats = model(batch_tokens, batch_tokens_mask, batch_sequences_so_far, batch_sequences_so_far_mask, train_sequences, train_sequences_mask)
                 optim.zero_grad()
                 loss.backward()
                 optim.step()
-            print(step, mode, loss.item())
-            summary_writer.add_scalar(f"{mode}/loss", loss.item(), step)
+            # print(step, mode, loss.item())
+            summary_writer.add_scalar(f"{mode}/loss", loss.cpu().item(), step)
                 
-            if step % 10 == 9 and mode == "eval":
+        if step % 10 == 9:
+            for mode in ["train", "eval"]:
                 # generate some samples
-                model.eval()
+                if mode == "train":
+                    model.train()
+                else:
+                    model.eval()
                 eval_indices = torch.randint(split_i, len(sequences), (preview_batch_size,), device=tokens.device)
                 batch_tokens = tokens[eval_indices]
                 batch_tokens_mask = tokens_mask[eval_indices]
                 batch_sequences_so_far = torch.zeros_like(sequences[eval_indices])
                 batch_sequences_so_far_mask = torch.ones_like(sequences_mask[eval_indices])
                 for i in range(0, sequences.shape[1] - 1):
-                    if i % 20 == 0:
-                        print("Generating preview, time step ", i)
+                    # if i % 20 == 0:
+                    #     print("Generating preview, time step ", i)
                     # temp fix to reduce runtime
                     if i > 300:
                         break
@@ -79,8 +86,17 @@ def train(config: Config):
                         # use elementwise and to set the mask to 1 only if it was 1 before and the 3rd element of the prediction is not 1
                         batch_sequences_so_far_mask[:, i + t] = batch_sequences_so_far_mask[:, i + t - 1] & (batch_sequences_so_far[:, i + t - 1, 2] > 0.5)
                 for i in range(preview_batch_size):
+                    # plot the generated sample
                     fig = plot_handwriting_sample(sequence_tensor_to_handwriting_sample(detokenize(batch_tokens[i]), batch_sequences_so_far[i]))
-                    # Save fig to tensorboard
-                    summary_writer.add_figure(f"sample_{i}", fig, step)
-        
+                    summary_writer.add_figure(f"sample_{mode}_{i}", fig, step)
+                # plot the training data
+                fig = plot_handwriting_sample(sequence_tensor_to_handwriting_sample(detokenize(batch_tokens[i]), sequences[eval_indices[i]]))
+                summary_writer.add_figure(f"sample_{mode}_groundtruth", fig, step)
+                # also log the debug stats
+                for name, value in debug_stats.items():
+                    summary_writer.add_scalar(f"{mode}/{name}", value, step)
+                # log an example tensor of what the model is predicting as text
+                summary_writer.add_text(f"{mode}/tensor_prediction", str(batch_sequences_so_far[0, 0:200]), step)
+                # log an example tensor of what the model should predict as text
+                summary_writer.add_text(f"{mode}/tensor_groundtruth", str(sequences[eval_indices][0, 0:200]), step)
         
