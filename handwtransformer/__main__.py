@@ -3,6 +3,7 @@ import random
 from time import sleep
 
 from matplotlib import pyplot as plt
+import torch
 from handwtransformer.dataset.loaders.IamLoader import load_iam_from_path
 from handwtransformer.config.Config import Config
 from handwtransformer.dataset.plotters.HandwritingSamplePlotter import animate_handwriting_sample, plot_handwriting_sample
@@ -29,6 +30,7 @@ if __name__ == "__main__":
     # plt.show()
     # plot_handwriting_sample(dataset.samples[rand_i])
     # plt.show()
-    
+    torch.set_num_threads(config.num_threads)
+    # enable anomaly detection for debugging
     train(config)
     

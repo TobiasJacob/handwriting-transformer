@@ -30,7 +30,8 @@ class EncoderBlock(torch.nn.Module):
 
     def forward(self, x, mask=None):
         # Attention part
-        attn_out, _ = self.self_attn(x, x, x, key_padding_mask=mask)
+        xBack = x
+        attn_out, _ = self.self_attn(x, x, x, key_padding_mask=~mask)
         x = x + self.dropout(attn_out)
         x = self.norm1(x)
 
@@ -94,7 +95,7 @@ class HandwritingTransformer(torch.nn.Module):
         z = z[:, -1:] # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
         prob_params = self.output(z) # Shape == (batch_size, 6)
         
-        pen_delta = torch.distributions.MultivariateNormal(prob_params[:, 0, :2], torch.diag_embed(torch.exp(prob_params[:, 0, 2:4]))) # Event_Shape == (batch_size, 2)
+        pen_delta = torch.distributions.MultivariateNormal(prob_params[:, 0, :2], torch.diag_embed(torch.exp(torch.maximum(prob_params[:, 0, 2:4], torch.tensor(0.01))))) # Event_Shape == (batch_size, 2)
         stroke_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 4])) # Event_Shape == (batch_size,)
         episode_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 5])) # Event_Shape == (batch_size,)
         
@@ -111,5 +112,5 @@ class HandwritingTransformer(torch.nn.Module):
             loss += -stroke_end.log_prob(train_sequences[:, 0, 2])
             loss += -episode_end.log_prob(train_sequences[:, 0, 3])
             loss = (loss * train_sequences_mask).sum() / train_sequences_mask.sum()
-            loss = loss.sum()
+            # loss = loss.sum()
             return loss

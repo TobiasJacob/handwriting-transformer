@@ -8,10 +8,17 @@ from handwtransformer.offlinerl.text_converter import detokenize, tokenize_datas
 from torch.utils.tensorboard import SummaryWriter
 
 def train(config: Config):
+    print("Num threads:", torch.get_num_threads())
+    print("Num GPUs:", torch.cuda.device_count())
     sequences, sequences_mask = generate_sequence_tensor(config)
     tokens, tokens_mask = tokenize_dataset(config)
+    sequences = sequences.to(config.device)
+    sequences_mask = sequences_mask.to(config.device)
+    tokens = tokens.to(config.device)
+    tokens_mask = tokens_mask.to(config.device)
     
     model = HandwritingTransformer(max_seq_len=sequences.shape[1])
+    model.to(config.device)
     optim = torch.optim.Adam(model.parameters(), lr=1e-3)
     
     batch_size = 32
@@ -25,12 +32,12 @@ def train(config: Config):
             split_i = len(sequences) // 10 * 8
             
             if mode == "train":
-                batch_indices = torch.randint(0, split_i, (batch_size,))
+                batch_indices = torch.randint(0, split_i, (batch_size,), device=tokens.device)
             else:
-                batch_indices = torch.randint(split_i, len(sequences), (batch_size,))
+                batch_indices = torch.randint(split_i, len(sequences), (batch_size,), device=tokens.device)
     
             while train_sequences_mask is None or train_sequences_mask.sum() == 0:
-                predict_cutoff = torch.randint(0, sequences.shape[1] - 1, (1,))
+                predict_cutoff = torch.randint(0, sequences.shape[1] - 1, (1,), device=tokens.device)
                 batch_tokens = tokens[batch_indices]
                 batch_tokens_mask = tokens_mask[batch_indices]
                 batch_sequences_so_far = sequences[batch_indices, :predict_cutoff]
@@ -54,13 +61,14 @@ def train(config: Config):
             if step % 10 == 9 and mode == "eval":
                 # generate some samples
                 model.eval()
-                eval_indices = torch.randint(split_i, len(sequences), (preview_batch_size,))
+                eval_indices = torch.randint(split_i, len(sequences), (preview_batch_size,), device=tokens.device)
                 batch_tokens = tokens[eval_indices]
                 batch_tokens_mask = tokens_mask[eval_indices]
                 batch_sequences_so_far = torch.zeros_like(sequences[eval_indices])
                 batch_sequences_so_far_mask = torch.ones_like(sequences_mask[eval_indices])
                 for i in range(0, sequences.shape[1] - 1):
-                    print("Generating preview, time step ", i)
+                    if i % 20 == 0:
+                        print("Generating preview, time step ", i)
                     # temp fix to reduce runtime
                     if i > 300:
                         break
