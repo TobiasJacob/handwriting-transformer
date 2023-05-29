@@ -35,7 +35,7 @@ def tokenize_dataset(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
     
     max_len = max([len(sample.text) for sample in dataset.samples])
     tokenized_dataset = torch.zeros((len(dataset.samples), max_len), dtype=torch.long)
-    mask = torch.zeros((len(dataset.samples), max_len))
+    mask = torch.zeros((len(dataset.samples), max_len), dtype=torch.bool)
     for i, sample in enumerate(dataset.samples):
         tokens = tokenize(sample.text)
         tokenized_dataset[i, :len(tokens)] = tokens
@@ -53,5 +53,5 @@ def detokenize(tokenized_text: torch.Tensor) -> str:
     Returns:
         str: The detokenized text.
     """
-    return "".join([chr(c) for c in tokenized_text])
+    return "".join([chr(c) for c in tokenized_text if c > 0])
     

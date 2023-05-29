@@ -106,9 +106,9 @@ class HandwritingTransformer(torch.nn.Module):
             return output
         else:
             loss = torch.zeros((x.shape[0]), device=x.device)
-            loss += pen_delta.log_prob(train_sequences[:, 0, :2])
-            loss += stroke_end.log_prob(train_sequences[:, 0, 2])
-            loss += episode_end.log_prob(train_sequences[:, 0, 3])
-            # loss = (loss * train_sequences_mask).sum() / (train_sequences_mask.sum() + 1e-8)
+            loss += -pen_delta.log_prob(train_sequences[:, 0, :2])
+            loss += -stroke_end.log_prob(train_sequences[:, 0, 2])
+            loss += -episode_end.log_prob(train_sequences[:, 0, 3])
+            loss = (loss * train_sequences_mask).sum() / train_sequences_mask.sum()
             loss = loss.sum()
             return loss

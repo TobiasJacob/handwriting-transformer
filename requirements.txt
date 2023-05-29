@@ -3,3 +3,4 @@ pandas
 matplotlib
 torch
 tqdm
+tensorboard

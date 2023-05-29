@@ -25,7 +25,7 @@ def generate_sequence_tensor(config: Config) -> Tuple[torch.Tensor, torch.Tensor
 
     max_seq_len = max([sum([stroke.shape[0] for stroke in sample.strokes]) for sample in dataset.samples])
     sequence_tensor = torch.zeros((len(dataset.samples), max_seq_len, 4))
-    mask = torch.zeros((len(dataset.samples), max_seq_len))
+    mask = torch.zeros((len(dataset.samples), max_seq_len), dtype=torch.bool)
     for i, sample in enumerate(dataset.samples):
         j = 0
         for stroke in sample.strokes:
@@ -66,7 +66,7 @@ def sequence_tensor_to_handwriting_sample(text: str, sequence_tensor: torch.Tens
     strokes = []
     last_i = 0
     for i in range(sequence_tensor.shape[0]):
-        if sequence_tensor[i, 2] == 1:
+        if sequence_tensor[i, 2] == 1 or i == sequence_tensor.shape[0] - 1:
             strokes.append(abs_poses[last_i:i].cpu().numpy())
             last_i = i
         if sequence_tensor[i, 3] == 1:
