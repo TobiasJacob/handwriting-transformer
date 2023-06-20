@@ -67,6 +67,7 @@ def sequence_tensor_to_handwriting_sample(text: str, sequence_tensor: torch.Tens
     last_i = 0
     for i in range(sequence_tensor.shape[0]):
         if sequence_tensor[i, 2] == 1 or i == sequence_tensor.shape[0] - 1:
+        # if i == sequence_tensor.shape[0] - 1:
             strokes.append(abs_poses[last_i:i].cpu().numpy())
             last_i = i
         if sequence_tensor[i, 3] == 1:

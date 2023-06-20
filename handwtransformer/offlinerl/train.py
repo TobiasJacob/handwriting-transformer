@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 import numpy as np
 import torch
 from handwtransformer.config import Config
@@ -22,11 +23,11 @@ def train(config: Config):
     tokens = tokens.to(config.device)
     tokens_mask = tokens_mask.to(config.device)
     
-    model = HandwritingTransformer(max_seq_len=handwriting.shape[1])
+    model = HandwritingTransformer(max_seq_len=handwriting.shape[1], max_text_len = tokens.shape[1])
     model.to(config.device)
     print(model)
     print("Num parameters:", sum([p.numel() for p in model.parameters()]))
-    optim = torch.optim.Adam(model.parameters(), lr=1e-5)
+    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
     
     batch_size = 16
     preview_batch_size = 8
@@ -62,10 +63,13 @@ def train(config: Config):
                 optim.zero_grad()
                 loss.backward()
                 optim.step()
+            for name, value in debug_stats.items():
+                if isinstance(value, torch.Tensor) and value.numel() == 1:
+                    summary_writer.add_scalar(f"{mode}/{name}", value, step)
             # print(step, mode, loss.item())
             summary_writer.add_scalar(f"{mode}/loss", loss.cpu().item(), step)
                 
-        if step % 10 == 0:
+        if step % 30 == 0:
             for mode in ["train", "eval"]:
                 # generate some samples
                 if mode == "train":
@@ -76,7 +80,8 @@ def train(config: Config):
                 batch_tokens = tokens[eval_indices]
                 batch_tokens_mask = tokens_mask[eval_indices]
                 gen_handwriting = torch.zeros_like(handwriting[eval_indices])
-                gen_handwriting_mask = torch.ones_like(handwriting_mask[eval_indices])
+                gen_handwriting_mask = torch.zeros_like(handwriting_mask[eval_indices], dtype=torch.bool)
+                gen_handwriting_mask[:, 0] = True
                 for i in range(1, handwriting.shape[1] - 1):
                     # if i % 20 == 0:
                     #     print("Generating preview, time step ", i)
@@ -85,8 +90,8 @@ def train(config: Config):
                         break
                     pred = model(batch_tokens, batch_tokens_mask, gen_handwriting[:, :i], gen_handwriting_mask[:, :i], pred_mode=True)
                     gen_handwriting[:, i] = pred
-                    # use elementwise and to set the mask to 1 only if it was 1 before and the 3rd element of the prediction is not 1
-                    gen_handwriting_mask[:, i] = gen_handwriting_mask[:, i - 1] & (gen_handwriting[:, i - 1, 2] > 0.5)
+                    # use elementwise and to set the mask to 1 only if it was 1 before and the 4rd element of the prediction is not 1
+                    gen_handwriting_mask[:, i] = gen_handwriting_mask[:, i - 1] & (gen_handwriting[:, i - 1, 3] < 0.5)
                 for i in range(preview_batch_size):
                     # plot the generated sample
                     fig = plot_handwriting_sample(sequence_tensor_to_handwriting_sample(detokenize(batch_tokens[i]), gen_handwriting[i]))
@@ -95,17 +100,24 @@ def train(config: Config):
                 fig = plot_handwriting_sample(sequence_tensor_to_handwriting_sample(detokenize(batch_tokens[i]), handwriting[eval_indices[i]]))
                 summary_writer.add_figure(f"sample_{mode}_groundtruth", fig, step)
                 # also log the debug stats
-                for name, value in debug_stats.items():
-                    if isinstance(value, torch.Tensor):
-                        summary_writer.add_scalar(f"{mode}/{name}", value, step)
                 # imshow for the prop params of the first sample
                 summary_writer.add_image(f"{mode}/prob_params", debug_stats["prob_params"][0], step, dataformats="HW")
+                # add the probs for episode end as line plot episode_end and stroke_end
+                fig = plt.figure()
+                plt.plot(torch.mean(debug_stats["episode_end"], dim=0).cpu().numpy())
+                summary_writer.add_figure(f"{mode}/episode_end", fig, step)
+                fig = plt.figure()
+                plt.plot(torch.mean(debug_stats["stroke_end"], dim=0).cpu().numpy())
+                summary_writer.add_figure(f"{mode}/stroke_end", fig, step)
+                fig = plt.figure()
+                plt.plot(handwriting[:, :, 3].sum(dim=0).cpu().numpy())
+                summary_writer.add_figure(f"{mode}/stroke_end_groundtruth", fig, step)
                 # log an example tensor of what the model is predicting as text
                 summary_writer.add_text(f"{mode}/tensor_prediction", str(gen_handwriting[0, 0:200]), step)
                 # log an example tensor of what the model should predict as text
                 summary_writer.add_text(f"{mode}/tensor_groundtruth", str(handwriting[eval_indices][0, 0:200]), step)
         
-        if step % 100 == 99:
+        if step % 100 == 0:
             # save the model in summary writer path
             path = summary_writer.log_dir + f"/model_{step}.pth"
             torch.save(model.state_dict(), path)

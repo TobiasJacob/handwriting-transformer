@@ -43,7 +43,7 @@ class EncoderBlock(torch.nn.Module):
         return x
 
 class HandwritingTransformer(torch.nn.Module):
-    def __init__(self, max_seq_len: int, *args, **kwargs) -> None:
+    def __init__(self, max_seq_len: int, max_text_len: int, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         encoding_size = 256
         self.max_seq_len = max_seq_len
@@ -51,9 +51,11 @@ class HandwritingTransformer(torch.nn.Module):
         self.n_mixtures = 20
         
         self.letter_embedding = torch.nn.Embedding(256, encoding_size)
-        self.letter_positional_embedding = torch.nn.Embedding(self.max_seq_len, encoding_size)
+        # self.letter_positional_embedding = torch.nn.Parameter(torch.randn(max_text_len, encoding_size))
+        self.letter_positional_embedding = torch.nn.Embedding(max_text_len, encoding_size)
         
         self.command_embedding = torch.nn.Linear(4, encoding_size)
+        # self.command_positional_embedding = torch.nn.Parameter(torch.randn(self.max_seq_len, encoding_size))
         self.command_positional_embedding = torch.nn.Embedding(self.max_seq_len, encoding_size)
         
         self.block1 = EncoderBlock(encoding_size, 8, 2 * encoding_size)
@@ -110,15 +112,15 @@ class HandwritingTransformer(torch.nn.Module):
         torch.cuda.synchronize()
         
         # pen_delta is going to be a mixture model of 20 bivariate gaussians
-        stroke_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, :, 0])) # Event_Shape == (batch_size, max_seq_length)
-        episode_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, :, 1])) # Event_Shape == (batch_size, max_seq_length)
+        stroke_end = torch.distributions.Bernoulli(logits=prob_params[:, :, 0]) # Event_Shape == (batch_size, max_seq_length)
+        episode_end = torch.distributions.Bernoulli(logits=prob_params[:, :, 1]) # Event_Shape == (batch_size, max_seq_length)
         
         n_mixtures = self.n_mixtures
-        mixture_weights = torch.softmax(prob_params[:, :, 2:2+n_mixtures], dim=-1) # Shape == (batch_size, max_seq_length, 20)
+        mixture_weights = prob_params[:, :, 2:2+n_mixtures] # Shape == (batch_size, max_seq_length, 20)
         gaussian_mus = prob_params[:, :, 2+n_mixtures:2+3*n_mixtures].reshape(prob_params.shape[0], prob_params.shape[1], n_mixtures, 2) # Shape == (batch_size, max_seq_length, 20, 2)
         gaussian_sigma = torch.exp(prob_params[:, :, 2+3*n_mixtures:2+5*n_mixtures].reshape(prob_params.shape[0], prob_params.shape[1], n_mixtures, 2)) # Shape == (batch_size, max_seq_length, 20, 2)
         
-        mixture_distribution = torch.distributions.Categorical(mixture_weights) # Event_Shape == (batch_size, max_seq_length, 20)
+        mixture_distribution = torch.distributions.Categorical(logits=mixture_weights) # Event_Shape == (batch_size, max_seq_length, 20)
         component_distribution = torch.distributions.MultivariateNormal(gaussian_mus, torch.diag_embed(gaussian_sigma)) # Event_Shape == (batch_size, max_seq_length, 20, 2)
         
         pen_delta = torch.distributions.MixtureSameFamily(
@@ -129,7 +131,7 @@ class HandwritingTransformer(torch.nn.Module):
         
         # Compute predictions or loss
         if pred_mode:
-            output = torch.zeros((z.shape[0], 4), device=z.device)
+            output = torch.zeros((handwriting.shape[0], 4), device=handwriting.device)
             output[:, :2] = pen_delta.sample()[:, -1, :] # Shape == (batch_size, 2)
             output[:, 2] = stroke_end.sample()[:, -1] # Shape == (batch_size,)
             output[:, 3] = episode_end.sample()[:, -1] # Shape == (batch_size,)
@@ -137,7 +139,7 @@ class HandwritingTransformer(torch.nn.Module):
             return output
         else:
             torch.cuda.synchronize()
-            loss = torch.zeros((handwriting_mask.shape[0], handwriting_mask.shape[1] - 1), device=z.device) # Shape == (batch_size, max_seq_len - 1)
+            loss = torch.zeros((handwriting_mask.shape[0], handwriting_mask.shape[1] - 1), device=handwriting_mask.device) # Shape == (batch_size, max_seq_len - 1)
             torch.cuda.synchronize()
             loss += -pen_delta.log_prob(handwriting_train[:, :, :2])
             torch.cuda.synchronize()
@@ -145,8 +147,7 @@ class HandwritingTransformer(torch.nn.Module):
             torch.cuda.synchronize()
             loss += -episode_end.log_prob(handwriting_train[:, :, 3])
             torch.cuda.synchronize()
-            loss = (loss * handwriting_mask[:, 1:]).sum() / handwriting_mask[:, 1:].sum()
-            # loss = loss.sum()
+            loss = (loss * ~handwriting_mask[:, 1:]).sum() / (~handwriting_mask[:, 1:]).sum()
             torch.cuda.synchronize()
             debug_stats = {
                 "mixture_distribution_entropy": mixture_distribution.entropy().mean(),
@@ -159,7 +160,9 @@ class HandwritingTransformer(torch.nn.Module):
                 "gaussian_sigma": gaussian_sigma.mean(),
                 "gaussian_std": gaussian_sigma.mean().sqrt(),
                 "gaussian_mus": gaussian_mus.mean(),
-                "prob_params": prob_params.detach().cpu().numpy(),
+                "prob_params": prob_params.detach().cpu(),
+                "episode_end": episode_end.probs.detach().cpu(),
+                "stroke_end": stroke_end.probs.detach().cpu(),
             }
                 
             torch.cuda.synchronize()
