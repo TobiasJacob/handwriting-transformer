@@ -28,10 +28,10 @@ class EncoderBlock(torch.nn.Module):
         self.norm2 = torch.nn.LayerNorm(input_dim)
         self.dropout = torch.nn.Dropout(dropout)
 
-    def forward(self, x, mask=None):
+    def forward(self, queryTokens, keyValueTokens, key_padding_mask=None, attn_mask=None):
         # Attention part
-        xBack = x
-        attn_out, _ = self.self_attn(x, x, x, key_padding_mask=~mask)
+        x = queryTokens
+        attn_out, _ = self.self_attn(queryTokens, keyValueTokens, keyValueTokens, key_padding_mask=key_padding_mask, attn_mask=attn_mask, need_weights=False)
         x = x + self.dropout(attn_out)
         x = self.norm1(x)
 
@@ -65,85 +65,102 @@ class HandwritingTransformer(torch.nn.Module):
         # self.final_attention = torch.nn.MultiheadAttention(encoding_size, 8, batch_first=True)
         self.output = torch.nn.Linear(encoding_size, 2+5*self.n_mixtures)
         
-    def forward(self, text: torch.Tensor, text_mask: torch.Tensor, sequences_so_far: torch.Tensor, sequences_so_far_mask: torch.Tensor, train_sequences: Optional[torch.Tensor], train_sequences_mask: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, text: torch.Tensor, text_mask: torch.Tensor, handwriting: Optional[torch.Tensor], handwriting_mask: Optional[torch.Tensor], pred_mode=False) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass of the model.
 
         Args:
             text (torch.Tensor): Text to be converted to handwriting. Shape == (batch_size, max_text_len)
             text_mask (torch.Tensor): Mask for the text. Shape == (batch_size, max_text_len)
-            sequences_so_far (torch.Tensor): Sequences generated so far. Shape == (batch_size, max_seq_len, 4)
-            sequences_so_far_mask (torch.Tensor): Mask for the sequences generated so far. Shape == (batch_size, max_seq_len)
-            train_sequences (Optional[torch.Tensor]): Ground truth sequences for training purposes. Shape == (batch_size, 1, 4)
-            train_sequences_mask (Optional[torch.Tensor]): Mask for the ground truth sequences. Shape == (batch_size, 1)
+            handwriting (Optional[torch.Tensor]): Ground truth sequences for training purposes. Shape == (batch_size, max_seq_length, 4)
+            handwriting_mask (Optional[torch.Tensor]): Mask for the ground truth sequences. Shape == (batch_size, max_seq_length)
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: _description_
         """
-        x = self.letter_embedding(text) # Shape == (batch_size, max_text_len, encoding_size)
+        handwriting_train = handwriting[:, 1:, :] # Shape == (batch_size, max_seq_len-1, 4)
+        attn_mask = torch.triu(torch.ones(handwriting.shape[1], handwriting.shape[1], device=handwriting.device), diagonal=1) # Shape == (max_seq_len, max_seq_len)
+        attn_mask = attn_mask.bool() # Shape == (max_seq_len, max_seq_len)
+        text_mask = ~text_mask.bool() # Shape == (batch_size, max_text_len)
+        handwriting_mask = ~handwriting_mask.bool() # Shape == (batch_size, max_seq_len)
+        text = self.letter_embedding(text) # Shape == (batch_size, max_text_len, encoding_size)
         # Add positional encoding
-        x = x + self.letter_positional_embedding(torch.arange(x.shape[1], device=x.device)) # Shape == (batch_size, max_text_len, encoding_size)
+        text = text + self.letter_positional_embedding(torch.arange(text.shape[1], device=text.device)) # Shape == (batch_size, max_text_len, encoding_size)
         # Apply self attention and feed forward block
-        x = self.block1(x, text_mask) # Shape == (batch_size, max_text_len, encoding_size)
-        
-        command_encodings = self.command_positional_embedding(torch.arange(sequences_so_far.shape[1], device=x.device)) # Shape == (max_text_len, encoding_size)
-        sequences_so_far = self.command_embedding(sequences_so_far) # Shape == (batch_size, max_seq_len, encoding_size)
-        sequences_so_far = sequences_so_far + command_encodings # Shape == (batch_size, max_seq_len, encoding_size)
-        
-        z = torch.concat((x, sequences_so_far), dim=1) # Shape == (batch_size, max_text_len + max_seq_len, encoding_size)
-        z_mask = torch.concat((text_mask, sequences_so_far_mask), dim=1) # Shape == (batch_size, max_text_len + max_seq_len)
+        text = self.block1(text, text, key_padding_mask=text_mask) # Shape == (batch_size, max_text_len, encoding_size)
+        text = self.block2(text, text, key_padding_mask=text_mask) # Shape == (batch_size, max_text_len, encoding_size)
+        torch.cuda.synchronize()
 
+        handwriting = self.command_embedding(handwriting) # Shape == (batch_size, max_seq_len, encoding_size)
+        command_encodings = self.command_positional_embedding(torch.arange(handwriting.shape[1], device=handwriting.device)) # Shape == (max_text_len, encoding_size)
+        handwriting = handwriting + command_encodings # Shape == (batch_size, max_seq_len, encoding_size)
+        torch.cuda.synchronize()
+        
         # Command encodings
-        z = self.block2(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        z = self.block3(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        z = self.block4(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        z = self.block5(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        z = self.block6(z, z_mask) # Shape == (batch_size, max_text_len + i, encoding_size)
-        # z, _ = self.final_attention(torch.ones_like(z[:, 0:1]), z, z) # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
-        z = z[:, -1:] # Shape == (batch_size, 1, encoding_size) # TODO: Figure out a better way to do this
-        prob_params = self.output(z) # Shape == (batch_size, 1, 6)
+        handwriting = self.block3(handwriting, handwriting, key_padding_mask=handwriting_mask, attn_mask=attn_mask) # Shape == (batch_size, max_seq_length, encoding_size)
+        handwriting = self.block4(handwriting, handwriting, key_padding_mask=handwriting_mask, attn_mask=attn_mask) # Shape == (batch_size, max_seq_length, encoding_size)
+        z = self.block5(handwriting, text, key_padding_mask=text_mask) # Shape == (batch_size, max_seq_length, encoding_size)
+        if pred_mode:
+            z = self.block6(z[:, -1:], z, key_padding_mask=handwriting_mask) # Shape == (batch_size, 1, encoding_size
+        else:
+            z = self.block6(z, z, key_padding_mask=handwriting_mask, attn_mask=attn_mask) # Shape == (batch_size, max_seq_length, encoding_size)
+        prob_params = self.output(z) # Shape == (batch_size, max_seq_length, 6)
+
+        if not pred_mode:
+            prob_params = prob_params[:, :-1, :] # Shape == (batch_size, max_seq_length-1, 6)
+        torch.cuda.synchronize()
         
         # pen_delta is going to be a mixture model of 20 bivariate gaussians
-        stroke_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 0])) # Event_Shape == (batch_size,)
-        episode_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, 0, 1])) # Event_Shape == (batch_size,)
+        stroke_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, :, 0])) # Event_Shape == (batch_size, max_seq_length)
+        episode_end = torch.distributions.Bernoulli(torch.sigmoid(prob_params[:, :, 1])) # Event_Shape == (batch_size, max_seq_length)
         
         n_mixtures = self.n_mixtures
-        mixture_weights = torch.softmax(prob_params[:, 0, 2:2+n_mixtures], dim=-1) # Shape == (batch_size, 20)
-        gaussian_mus = prob_params[:, 0, 2+n_mixtures:2+3*n_mixtures].reshape(-1, n_mixtures, 2) # Shape == (batch_size, 20, 2)
-        gaussian_sigma = torch.exp(prob_params[:, 0, 2+3*n_mixtures:2+5*n_mixtures].reshape(-1, n_mixtures, 2)) # Shape == (batch_size, 20, 2)
+        mixture_weights = torch.softmax(prob_params[:, :, 2:2+n_mixtures], dim=-1) # Shape == (batch_size, max_seq_length, 20)
+        gaussian_mus = prob_params[:, :, 2+n_mixtures:2+3*n_mixtures].reshape(prob_params.shape[0], prob_params.shape[1], n_mixtures, 2) # Shape == (batch_size, max_seq_length, 20, 2)
+        gaussian_sigma = torch.exp(prob_params[:, :, 2+3*n_mixtures:2+5*n_mixtures].reshape(prob_params.shape[0], prob_params.shape[1], n_mixtures, 2)) # Shape == (batch_size, max_seq_length, 20, 2)
         
-        mixture_distribution = torch.distributions.Categorical(mixture_weights) # Event_Shape == (batch_size,)
-        component_distribution = torch.distributions.MultivariateNormal(gaussian_mus, torch.diag_embed(gaussian_sigma)) # Event_Shape == (batch_size, 20)
+        mixture_distribution = torch.distributions.Categorical(mixture_weights) # Event_Shape == (batch_size, max_seq_length, 20)
+        component_distribution = torch.distributions.MultivariateNormal(gaussian_mus, torch.diag_embed(gaussian_sigma)) # Event_Shape == (batch_size, max_seq_length, 20, 2)
         
         pen_delta = torch.distributions.MixtureSameFamily(
             mixture_distribution,
             component_distribution
-        ) # Event_Shape == (batch_size, 2)
+        ) # Event_Shape == (batch_size, max_seq_length, 2)
+        torch.cuda.synchronize()
         
         # Compute predictions or loss
-        if train_sequences is None:
-            output = torch.zeros((x.shape[0], 1, 4), device=x.device)
-            output[:, 0, :2] = pen_delta.sample() # Shape == (batch_size, max_seq_len, 2)
-            output[:, 0, 2] = stroke_end.sample() # Shape == (batch_size, max_seq_len)
-            output[:, 0, 3] = episode_end.sample() # Shape == (batch_size, max_seq_len)
+        if pred_mode:
+            output = torch.zeros((z.shape[0], 4), device=z.device)
+            output[:, :2] = pen_delta.sample()[:, -1, :] # Shape == (batch_size, 2)
+            output[:, 2] = stroke_end.sample()[:, -1] # Shape == (batch_size,)
+            output[:, 3] = episode_end.sample()[:, -1] # Shape == (batch_size,)
+            torch.cuda.synchronize()
             return output
         else:
-            loss = torch.zeros((x.shape[0]), device=x.device)
-            loss += -pen_delta.log_prob(train_sequences[:, 0, :2])
-            loss += -stroke_end.log_prob(train_sequences[:, 0, 2])
-            loss += -episode_end.log_prob(train_sequences[:, 0, 3])
-            loss = (loss * train_sequences_mask).sum() / train_sequences_mask.sum()
+            torch.cuda.synchronize()
+            loss = torch.zeros((handwriting_mask.shape[0], handwriting_mask.shape[1] - 1), device=z.device) # Shape == (batch_size, max_seq_len - 1)
+            torch.cuda.synchronize()
+            loss += -pen_delta.log_prob(handwriting_train[:, :, :2])
+            torch.cuda.synchronize()
+            loss += -stroke_end.log_prob(handwriting_train[:, :, 2])
+            torch.cuda.synchronize()
+            loss += -episode_end.log_prob(handwriting_train[:, :, 3])
+            torch.cuda.synchronize()
+            loss = (loss * handwriting_mask[:, 1:]).sum() / handwriting_mask[:, 1:].sum()
             # loss = loss.sum()
+            torch.cuda.synchronize()
             debug_stats = {
                 "mixture_distribution_entropy": mixture_distribution.entropy().mean(),
                 "component_distribution_entropy": component_distribution.entropy().mean(),
                 "stroke_end_entropy": stroke_end.entropy().mean(),
                 "episode_end_entropy": episode_end.entropy().mean(),
-                "mse": ((pen_delta.mean - train_sequences[:, 0, :2])**2).mean(),
+                "mse": ((pen_delta.mean - handwriting_train[:, :, :2])**2).mean(),
                 "stroke_end_prob": stroke_end.probs.mean(),
                 "episode_end_prob": episode_end.probs.mean(),
                 "gaussian_sigma": gaussian_sigma.mean(),
                 "gaussian_std": gaussian_sigma.mean().sqrt(),
                 "gaussian_mus": gaussian_mus.mean(),
+                "prob_params": prob_params.detach().cpu().numpy(),
             }
                 
+            torch.cuda.synchronize()
             return loss, debug_stats
