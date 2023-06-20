@@ -43,12 +43,13 @@ class EncoderBlock(torch.nn.Module):
         return x
 
 class HandwritingTransformer(torch.nn.Module):
-    def __init__(self, max_seq_len: int, max_text_len: int, *args, **kwargs) -> None:
+    def __init__(self, max_seq_len: int, max_text_len: int, train_noise: float, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         encoding_size = 256
         self.max_seq_len = max_seq_len
         self.encoding_size = encoding_size
         self.n_mixtures = 20
+        self.train_noise = train_noise
         
         self.letter_embedding = torch.nn.Embedding(256, encoding_size)
         # self.letter_positional_embedding = torch.nn.Parameter(torch.randn(max_text_len, encoding_size))
@@ -92,6 +93,10 @@ class HandwritingTransformer(torch.nn.Module):
         text = self.block2(text, text, key_padding_mask=text_mask) # Shape == (batch_size, max_text_len, encoding_size)
         torch.cuda.synchronize()
 
+        if self.training:
+            handwriting[:, :, :2] = handwriting[:, :, :2] + torch.randn_like(handwriting[:, :, :2]) * self.train_noise
+        torch.cuda.synchronize()
+    
         handwriting = self.command_embedding(handwriting) # Shape == (batch_size, max_seq_len, encoding_size)
         command_encodings = self.command_positional_embedding(torch.arange(handwriting.shape[1], device=handwriting.device)) # Shape == (max_text_len, encoding_size)
         handwriting = handwriting + command_encodings # Shape == (batch_size, max_seq_len, encoding_size)

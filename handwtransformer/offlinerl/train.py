@@ -23,7 +23,8 @@ def train(config: Config):
     tokens = tokens.to(config.device)
     tokens_mask = tokens_mask.to(config.device)
     
-    model = HandwritingTransformer(max_seq_len=handwriting.shape[1], max_text_len = tokens.shape[1])
+    train_noise = 2.0
+    model = HandwritingTransformer(max_seq_len=handwriting.shape[1], max_text_len = tokens.shape[1], train_noise = train_noise)
     model.to(config.device)
     print(model)
     print("Num parameters:", sum([p.numel() for p in model.parameters()]))
@@ -99,6 +100,11 @@ def train(config: Config):
                 # plot the training data
                 fig = plot_handwriting_sample(sequence_tensor_to_handwriting_sample(detokenize(batch_tokens[i]), handwriting[eval_indices[i]]))
                 summary_writer.add_figure(f"sample_{mode}_groundtruth", fig, step)
+                sample_with_noise = handwriting[eval_indices[i]].clone()
+                sample_with_noise[:, :2] += torch.randn_like(sample_with_noise[:, :2]) * train_noise
+                torch.cuda.synchronize()
+                fig = plot_handwriting_sample(sequence_tensor_to_handwriting_sample(detokenize(batch_tokens[i]), sample_with_noise))
+                summary_writer.add_figure(f"sample_{mode}_groundtruth_with_noise", fig, step)
                 # also log the debug stats
                 # imshow for the prop params of the first sample
                 summary_writer.add_image(f"{mode}/prob_params", debug_stats["prob_params"][0], step, dataformats="HW")
