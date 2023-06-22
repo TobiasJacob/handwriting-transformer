@@ -1,6 +1,6 @@
 numpy
 pandas
 matplotlib
-torch==1.13
+torch
 tqdm
 tensorboard

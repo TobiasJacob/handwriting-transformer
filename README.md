@@ -31,3 +31,22 @@ The mixture density network is a mixture of Gaussians. It takes the output token
 ### Download data
 
 Download the offline data from [IAM](https://fki.tic.heia-fr.ch/databases/iam-on-line-handwriting-database) and extract it to the `data` folder.
+
+Extract the tar.gz files using
+
+```
+tar -xzf data/lineStrokes-all.tar.gz -C data/iam
+tar -xzf data/ascii-all.tar.gz -C data/iam
+```
+
+## Prepare data
+
+```
+python -m handwtransformer.prepare
+```
+
+## Train
+
+```
+python -m handwtransformer
+```
